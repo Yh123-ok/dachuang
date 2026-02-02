@@ -4,14 +4,14 @@ from scipy.interpolate import Rbf
 from sklearn.preprocessing import MinMaxScaler
 import mne
 
-# --- 1. 配置与路径 ---
+#  1. 配置与路径 
 A_RESULT_DIR = r'D:\EEGLAB\Processed_Data'
 SAVE_DIR = r'D:\EEGLAB\Processed_Data_Python'
 samples_per_subject = 600 
 
 if not os.path.exists(SAVE_DIR): os.makedirs(SAVE_DIR)
 
-# --- 2. 坐标获取与网格生成 ---
+#  2. 坐标获取与网格生成 
 def get_coords_optimized():
     ch_names = [
         'Fp1', 'AF3', 'F3', 'F7', 'FC5', 'FC1', 'C3', 'T7', 'CP5', 'CP1', 'P3', 'P7',
@@ -38,13 +38,13 @@ grid_edge = np.linspace(-0.5179, 0.5179, 32)
 grid_x, grid_y = np.meshgrid(grid_edge, grid_edge)
 mask = np.sqrt(grid_x**2 + grid_y**2) > 0.5179 
 
-# --- 3. 加载数据 ---
+#  3. 加载数据 
 print("Loading 1D features...")
 all_psds = np.load(os.path.join(A_RESULT_DIR, 'final_psds.npy'))   
 all_stats = np.load(os.path.join(A_RESULT_DIR, 'final_stats.npy')) 
 all_peris = np.load(os.path.join(A_RESULT_DIR, 'final_peris.npy')) 
 
-# --- 4. 改进的插值循环 ---
+#  4. 改进的插值循环 
 PSD_features = np.zeros((19200, 5, 32, 32))
 
 print("Starting Interpolation (Optimized v4 style)...")
@@ -63,7 +63,7 @@ for k in range(19200):
     
     if k % 2000 == 0: print(f"Progress: {k}/19200 samples...")
 
-# --- 5. 受试者内标准化 ---
+#  5. 受试者内标准化 
 print("Performing Subject-wise Normalization...")
 for b in range(5):
     for s in range(32):
@@ -81,7 +81,7 @@ for b in range(5):
         sub_band_data[np.isnan(sub_band_data)] = 0
         PSD_features[start:end, b, :, :] = sub_band_data
 
-# --- 6. 保存 ---
+#  6. 保存 
 for s in range(32):
     start, end = s * 600, (s + 1) * 600
     save_name = os.path.join(SAVE_DIR, f's{s+1:02d}_features.npz')
