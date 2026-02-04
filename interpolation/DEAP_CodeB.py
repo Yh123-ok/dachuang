@@ -5,8 +5,8 @@ from sklearn.preprocessing import MinMaxScaler
 import mne
 
 #  1. 配置与路径 
-A_RESULT_DIR = r'D:\EEGLAB\Processed_Data'
-SAVE_DIR = r'D:\EEGLAB\Processed_Data_Python'
+A_RESULT_DIR = r'D:\Users\cyz\dc\111'
+SAVE_DIR = r'D:\Users\cyz\dc\222'
 samples_per_subject = 600 
 
 if not os.path.exists(SAVE_DIR): os.makedirs(SAVE_DIR)

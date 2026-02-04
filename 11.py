@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import os
 
 # --- 配置路径 ---
-FEAT_DIR = r'D:\EEGLAB\Processed_Data_Python' # 你保存 .npz 的路径
+FEAT_DIR = r'D:\Users\cyz\dc\222' # 你保存 .npz 的路径
 subject_id = 1  # 随便选一个受试者看看
 sample_idx = 100 # 选第100个样本
 

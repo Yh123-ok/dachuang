@@ -7,8 +7,8 @@ from scipy.stats import skew, kurtosis
 import neurokit2 as nk
 
 # !!!1. 配置 
-RAW_DATA_PATH = r"E:\DEAP\data_preprocessed_matlab"
-SAVE_DIR = r'D:\EEGLAB\Processed_Data'
+RAW_DATA_PATH = r"E:\BaiduNetdiskDownload\DEAP\data_preprocessed_matlab"
+SAVE_DIR = r'D:\Users\cyz\dc\111'
 fs = 128
 segment_cnt = 15
 EPS = 1e-8

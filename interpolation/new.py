@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # --- 修改为你生成的任意一个文件 ---
-CHECK_FILE = r'D:\EEGLAB\Processed_Data_Python\s01_features.npz'
+CHECK_FILE = r'D:\Users\cyz\dc\222\s01_features.npz'
 
 def check_data():
     data = np.load(CHECK_FILE)
