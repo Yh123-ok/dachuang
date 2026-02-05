@@ -214,6 +214,31 @@ def extract_psd(sig, fs, bands, nperseg=None):
     
     return log_res
 
+def extract_eeg_psd(seg_eeg, fs=128):
+  
+    nperseg = fs
+    noverlap = fs // 2   
+    window = get_window('hamming', nperseg)
+
+    bands = [(4, 8), (8, 13), (8, 10), (13, 30), (30, 45)]
+
+    f, pxx = welch(
+        seg_eeg,
+        fs=fs,
+        window=window,
+        nperseg=nperseg,
+        noverlap=noverlap,
+        scaling='density'
+    )
+
+    psd_feat = []
+    for fmin, fmax in bands:
+        idx = (f >= fmin) & (f <= fmax)
+        band_power = np.mean(pxx[:, idx], axis=1)
+        psd_feat.append(band_power)
+
+    # 下限保护，避免后续 log 问题
+    return np.maximum(np.concatenate(psd_feat), 1e-12)
 #!!!5.滤波：EEG的4-45Hz滤波和ICA去噪官方已做过,只对外周进行相应滤波
 def preprocess_trial(data, trial,fs=128):
     eeg = data[trial, :32, 3*fs:].copy()
@@ -289,8 +314,7 @@ for subj in range(1, 33):
             
             # 1. 脑电特征提取 (4s)
             seg_eeg = eeg_full[:, st:ed]
-            eeg_bands = [(4, 8), (8, 13), (8, 10), (13, 30), (30, 45)]
-            psd_feat = extract_psd(seg_eeg, fs, eeg_bands)
+            psd_feat = extract_eeg_psd(seg_eeg, fs)
             stat_feat = extract_complex_stats(seg_eeg)
 
             # 2. 外周快特征提取 (4s)
@@ -382,7 +406,7 @@ def robust_finalize(data_list, name):
     return arr.astype(np.float32)
 
 # 应用清洗
-all_psds_arr = robust_finalize(all_psds, "EEG_PSD")
+
 all_stats_arr = robust_finalize(all_stats, "EEG_Stats")
 all_peris_arr = robust_finalize(all_peris, "Peri")
 

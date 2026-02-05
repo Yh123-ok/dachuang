@@ -131,8 +131,8 @@ def load_data_raw(dataset_name, feat_root, label_root):
 # 4. LOSO 生成器
 
 def dataset_loaders(dataset_name, batch_size=128, label_type='valence',
-                    feat_root=r'D:\EEGLAB\Processed_Data_Python', 
-                    label_root=r'E:\DEAP\data_preprocessed_matlab'):
+                    feat_root=r'D:\Users\cyz\dc\222', 
+                    label_root=r'E:\BaiduNetdiskDownload\DEAP\data_preprocessed_matlab'):
     
     # 加载所有数据
     maps_list, stats_list, peris_list, labels_list = load_data_raw(dataset_name, feat_root, label_root)
