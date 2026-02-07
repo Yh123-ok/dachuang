@@ -9,7 +9,7 @@ import os
 import scipy.io as sio
 
 # ==========================================
-# 🛠️ 模块 1: 基础组件 - 残差动态图层 (保持不变)
+#  模块 1: 基础组件 - 残差动态图层 (保持不变)
 # ==========================================
 class ResDGFLayer(nn.Module):
     """
@@ -35,7 +35,7 @@ class ResDGFLayer(nn.Module):
         return self.norm(self.activation(out) + x)
 
 # ==========================================
-# 🛠️ 模块 2: 深层 GNN 堆叠块 (保持不变)
+#  模块 2: 深层 GNN 堆叠块 (保持不变)
 # ==========================================
 class DeepGNNBlock(nn.Module):
     def __init__(self, d_model, layers=3, num_heads=4):
@@ -50,7 +50,7 @@ class DeepGNNBlock(nn.Module):
         return x
 
 # ==========================================
-# 🧠 模块 3: Deep-Res-MT-DGF-GNN 模型主体 (保持不变)
+#  模块 3: Deep-Res-MT-DGF-GNN 模型主体 (保持不变)
 # ==========================================
 class Deep_MT_DGF_GNN(nn.Module):
     def __init__(self, hidden_dim=64):
@@ -104,7 +104,7 @@ class Deep_MT_DGF_GNN(nn.Module):
         return self.v_head(flat_feat), self.a_head(flat_feat)
 
 # ==========================================
-# 💾 模块 4: 数据加载 (修改支持指定文件列表)
+#  模块 4: 数据加载 (修改支持指定文件列表)
 # ==========================================
 class DeapMultiModalDataset(Dataset):
     def __init__(self, npz_dir, raw_mat_dir, filenames=None):
@@ -171,7 +171,7 @@ class DeapMultiModalDataset(Dataset):
         return maps, stats, peri, self.v_labels[idx], self.a_labels[idx]
 
 # ==========================================
-# 🚀 模块 5: 训练引擎 (修改为 LOSO 流程)
+#  模块 5: 训练引擎 (修改为 LOSO 流程)
 # ==========================================
 def train_deep_mt_dgf_loso():
     # --- 配置区域 ---
@@ -186,7 +186,7 @@ def train_deep_mt_dgf_loso():
     all_files = sorted([f for f in os.listdir(NPZ_PATH) if f.endswith('.npz')])
     num_subjects = len(all_files)
     
-    print(f"\n🚀 开始 LOSO (Leave-One-Subject-Out) 验证")
+    print(f"\n 开始 LOSO (Leave-One-Subject-Out) 验证")
     print(f"总被试数: {num_subjects} | Device: {DEVICE}")
     print(f"模型: Deep-Res-MT-DGF-GNN | Epochs per fold: {EPOCHS}")
     
@@ -275,7 +275,7 @@ def train_deep_mt_dgf_loso():
 
     # --- 最终 LOSO 报告 ---
     print("\n" + "="*50)
-    print("🏆 LOSO 最终评估报告 (Deep-Res-MT-DGF-GNN)")
+    print(" LOSO 最终评估报告 (Deep-Res-MT-DGF-GNN)")
     print("="*50)
     
     avg_v_acc = np.mean(loso_results['v_acc'])
