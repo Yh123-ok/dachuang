@@ -22,51 +22,56 @@ BRAIN_REGIONS = {
 }
 
 # ==========================================
-# 2. 图神经网络基础模块 (GNN & DGF)
+# 2. 图神经网络基础模块 (GNN & 微状态 DGF)
 # ==========================================
 class LocalGNNLayer(nn.Module):
     """局部自适应图卷积 (用于捕捉 32 个头皮电极之间的固有物理/神经连通性)"""
     def __init__(self, in_dim, out_dim):
         super().__init__()
-        # 可学习的 32x32 邻接矩阵
         self.adj = nn.Parameter(torch.randn(32, 32) * 0.01)
         self.proj = nn.Linear(in_dim, out_dim)
         self.norm = nn.LayerNorm(out_dim)
         self.act = nn.ELU()
 
     def forward(self, x):
-        # x: (Batch, 32, in_dim)
         adj_normalized = F.softmax(self.adj, dim=-1) 
         out = torch.matmul(adj_normalized, x)
         out = self.proj(out)
         return self.norm(self.act(out) + x)
 
-class DGFLayer(nn.Module):
-    """动态图融合网络 (根据模态节点的特征相似度实时动态建图)"""
+class MicrostateDGFLayer(nn.Module):
+    """【修改点】引入微状态‘准稳态’(Quasi-stable)特性的动态图融合网络"""
     def __init__(self, d_model, num_heads=8):
         super().__init__()
         self.num_heads = num_heads
         self.log_sigmas = nn.Parameter(torch.zeros(num_heads, 1, 1))
+        # 准稳态门控参数：学习大脑在状态演化时的平滑度
+        self.transition_gate = nn.Parameter(torch.tensor([0.5]))
         self.proj = nn.Linear(d_model, d_model)
         self.norm = nn.LayerNorm(d_model)
         self.act = nn.ELU()
 
-    def forward(self, x):
-        # x: (Batch, Nodes, d_model)
+    def forward(self, x, prev_adj=None):
+        # 1. 计算当前状态的拓扑距离
         dist_sq = torch.cdist(x, x, p=2)**2
         sigmas = torch.exp(self.log_sigmas)
+        curr_adj = torch.exp(-dist_sq.unsqueeze(1) / (2 * sigmas.unsqueeze(0)**2 + 1e-6)).mean(dim=1)
         
-        adjs = torch.exp(-dist_sq.unsqueeze(1) / (2 * sigmas.unsqueeze(0)**2 + 1e-6))
-        adj_final = adjs.mean(dim=1) 
+        # 2. 模拟微状态平滑约束 (如果存在前一层状态，则约束突变)
+        if prev_adj is not None:
+            gate = torch.sigmoid(self.transition_gate)
+            adj_final = gate * curr_adj + (1 - gate) * prev_adj
+        else:
+            adj_final = curr_adj
         
         out = torch.matmul(adj_final, x)
         out = self.proj(out)
-        return self.norm(self.act(out) + x)
+        return self.norm(self.act(out) + x), adj_final
 
 # ==========================================
-# 3. 双层图多模态主模型 (Dual-Graph Architecture)
+# 3. 双层图多模态主模型 (微状态强化版)
 # ==========================================
-class Deep_MT_GNN_DGF(nn.Module):
+class Microstate_MT_GNN_DGF(nn.Module):
     def __init__(self, hidden_dim=64):
         super().__init__()
         self.hidden_dim = hidden_dim
@@ -82,13 +87,15 @@ class Deep_MT_GNN_DGF(nn.Module):
             for r in BRAIN_REGIONS.keys()
         })
 
-        # --- B. 空间 CNN 分支 (对抗个体差异) ---
-        self.cnn_extractor = nn.Sequential(
-            nn.Conv2d(5, 16, 3, padding=1), nn.InstanceNorm2d(16), nn.ELU(), nn.MaxPool2d(2),
-            nn.Conv2d(16, 32, 3, padding=1), nn.InstanceNorm2d(32), nn.ELU(),
+        # --- B. 脑微状态空间分支 (模拟 4 大经典微状态原型) ---
+        self.ms_encoder = nn.Sequential(
+            nn.Conv2d(5, 32, 3, padding=1), nn.InstanceNorm2d(32), nn.ELU(), nn.MaxPool2d(2),
+            # 【修改点】强制收敛为 4 个通道，匹配 Class A/B/C/D 微状态地形图
+            nn.Conv2d(32, 4, 3, padding=1), nn.InstanceNorm2d(4), nn.ELU(),
             nn.AdaptiveAvgPool2d((2, 2)), nn.Flatten()
         )
-        self.cnn_node_gen = nn.Linear(128, 8 * hidden_dim)
+        # 将微状态原型映射回你原定的 8 个空间节点维度
+        self.ms_node_gen = nn.Linear(16, 8 * hidden_dim)
 
         # --- C. 外周生理分支 ---
         self.peri_node_gen = nn.Sequential(
@@ -98,10 +105,9 @@ class Deep_MT_GNN_DGF(nn.Module):
 
         # --- D. 全局 DGF 跨模态融合 (21节点) ---
         self.modality_emb = nn.Parameter(torch.randn(1, 21, hidden_dim) * 0.02)
-        self.dgf_fusion = nn.Sequential(
-            DGFLayer(hidden_dim, num_heads=8),
-            DGFLayer(hidden_dim, num_heads=8)
-        )
+        # 拆分为独立层，以便传递微状态演化的拓扑结构(prev_adj)
+        self.dgf_1 = MicrostateDGFLayer(hidden_dim, num_heads=8)
+        self.dgf_2 = MicrostateDGFLayer(hidden_dim, num_heads=8)
         
         # --- E. 多任务决策头 ---
         self.dropout = nn.Dropout(0.4)
@@ -110,7 +116,7 @@ class Deep_MT_GNN_DGF(nn.Module):
         self.log_vars = nn.Parameter(torch.zeros(2)) # 自动平衡 V 和 A 的 Loss
 
     def forward(self, maps, stats, peri):
-        # 1. GNN 处理 32 通道，并按脑区聚合为 5 个神经节点
+        # 1. GNN 处理 32 通道并聚合为 5 个神经节点
         h_stats = self.eeg_gnn(self.eeg_proj(stats))
         region_nodes = []
         for r, idx in BRAIN_REGIONS.items():
@@ -118,20 +124,23 @@ class Deep_MT_GNN_DGF(nn.Module):
             region_nodes.append(node_feat)
         h_neuro = torch.stack(region_nodes, dim=1) # (Batch, 5, H)
 
-        # 2. 生成其他模态节点
-        h_cnn = self.cnn_node_gen(self.cnn_extractor(maps)).view(-1, 8, self.hidden_dim)
+        # 2. 生成微状态空间节点与外周节点
+        h_ms = self.ms_node_gen(self.ms_encoder(maps)).view(-1, 8, self.hidden_dim)
         h_peri = self.peri_node_gen(peri).view(-1, 8, self.hidden_dim)
 
-        # 3. DGF 跨模态全连接图融合
-        combined_nodes = torch.cat([h_neuro, h_cnn, h_peri], dim=1) + self.modality_emb
-        fused_nodes = self.dgf_fusion(combined_nodes)
+        # 3. 跨模态微状态动态融合 (DGF)
+        combined_nodes = torch.cat([h_neuro, h_ms, h_peri], dim=1) + self.modality_emb
+        
+        # 级联 DGF，传递前一层的建图结果，实现微状态平滑过渡
+        fused_1, adj_1 = self.dgf_1(combined_nodes)
+        fused_nodes, _ = self.dgf_2(fused_1, prev_adj=adj_1) 
         
         # 4. 展平并输出
         flat_feat = self.dropout(fused_nodes.view(fused_nodes.size(0), -1))
         return self.v_head(flat_feat), self.a_head(flat_feat)
 
 # ==========================================
-# 4. 高速内存数据加载器
+# 4. 高速内存数据加载器 (保持不变)
 # ==========================================
 class DeapLoaderRAM(Dataset):
     def __init__(self, npz_path, mat_path, files):
@@ -148,7 +157,6 @@ class DeapLoaderRAM(Dataset):
                 s_list.append(d['eeg_en_stat'])
                 p_list.append(d['peri_feature'])
         
-        # 一次性装载进内存
         self.m = torch.from_numpy(np.concatenate(m_list)).float()
         self.s = torch.from_numpy(np.concatenate(s_list)).view(-1, 32, 7).float()
         self.p = torch.from_numpy(np.concatenate(p_list)).float()
@@ -187,11 +195,13 @@ def run_loso_evaluation():
         train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=0, pin_memory=True)
         test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False)
 
-        # 初始化模型与优化器
-        model = Deep_MT_GNN_DGF().to(DEVICE)
+        # 初始化微状态模型
+        model = Microstate_MT_GNN_DGF().to(DEVICE)
         optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-2)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
-        scaler = torch.cuda.amp.GradScaler() # AMP 混合精度加速
+        
+        # 【修改点】更新为最新的 PyTorch AMP 接口，消除 FutureWarning
+        scaler = torch.amp.GradScaler('cuda') 
 
         # 开始训练
         for ep in range(EPOCHS):
@@ -200,17 +210,14 @@ def run_loso_evaluation():
                 m, s, p, lv, la = m.to(DEVICE), s.to(DEVICE), p.to(DEVICE), lv.to(DEVICE), la.to(DEVICE)
                 optimizer.zero_grad()
                 
-                # 混合精度前向传播
-                with torch.cuda.amp.autocast():
+                # 【修改点】更新为最新的 autocast 接口
+                with torch.amp.autocast('cuda'):
                     ov, oa = model(m, s, p)
-                    # 加入 Label Smoothing 缓解过拟合
                     loss_v = F.cross_entropy(ov, lv, label_smoothing=0.1)
                     loss_a = F.cross_entropy(oa, la, label_smoothing=0.1)
-                    # 动态多任务权重
                     loss = (loss_v * torch.exp(-model.log_vars[0]) + model.log_vars[0]) + \
                            (loss_a * torch.exp(-model.log_vars[1]) + model.log_vars[1])
                 
-                # 反向传播
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
@@ -234,8 +241,12 @@ def run_loso_evaluation():
         
         print(f"[{i+1}/{len(all_files)}] 被试: {subj} | Val Acc: {v_acc:.4f} | Aro Acc: {a_acc:.4f}")
 
+        # 【修改点】强制释放内存与显存，防止 32 轮 LOSO 导致系统崩溃
+        del model, optimizer, train_ds, test_ds
+        torch.cuda.empty_cache() 
+
     print("\n" + "="*50)
-    print(" LOSO 最终评估报告 (双层图: Local GNN + Global DGF)")
+    print(" LOSO 最终评估报告 (微状态: Microstate CNN + Quasi-stable DGF)")
     print("="*50)
     print(f"Valence 平均准确率: {np.mean(loso_v_acc):.4f}")
     print(f"Arousal 平均准确率: {np.mean(loso_a_acc):.4f}")
