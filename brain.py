@@ -201,7 +201,7 @@ def run_loso_evaluation():
     NPZ_DIR = r'D:\Users\cyz\dc\222'
     RAW_DIR = r'E:\BaiduNetdiskDownload\DEAP\data_preprocessed_matlab'
     # 【新增】视觉特征存放的文件夹路径 (对应你队友代码中的 OUTPUT_DIR)
-    VISUAL_DIR = r'D:\大创\result' 
+    VISUAL_DIR = r'D:\Users\cyz\dc\see' 
     
     BATCH_SIZE = 256
     EPOCHS = 30

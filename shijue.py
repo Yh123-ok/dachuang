@@ -17,23 +17,31 @@ import time
 from datetime import datetime
 import pandas as pd
 import cv2  # 用于视频处理
+import glob
 
 warnings.filterwarnings('ignore')
 
 # ==================== 用户配置区域（只需要修改这里！）====================
 
 # 1. 模型路径（必须修改）
-MODEL_PATH = '/data/coding/face2nodes_best.pth'  # 改为您的模型路径
+MODEL_PATH = r'D:\Users\cyz\dc\moxing\face2nodes_best.pth'  # 改为您的模型路径
 
-# 2. 视频路径（必须修改）
-VIDEO_PATH = '/data/coding/071309_w_21-PA4-076.mp4'       # 改为您的视频路径
+# 2. 视频路径配置（二选一）
+# 方式A：单个视频文件
+# VIDEO_PATH = '/data/coding/071309_w_21-PA4-076.mp4'
+
+# 方式B：视频目录（批量处理该目录下所有视频）
+VIDEO_DIR = r'E:\BaiduNetdiskDownload\DEAP\face_video\s22'  # 包含多个视频的目录
 
 # 3. 输出目录
-OUTPUT_DIR = '/data/coding/video_features_output'           # 特征输出目录
+OUTPUT_DIR = r'D:\Users\cyz\dc\see'  # 特征输出目录
 
 # 4. 处理参数
-SAMPLE_RATE = 5                                   # 采样率（每5帧处理一帧）
-OUTPUT_DIM = 512                                   # 输出特征维度
+TARGET_FEATURES = 15  # 每个视频提取的特征数量（固定15组）
+OUTPUT_DIM = 512      # 输出特征维度
+
+# 5. 文件命名选项
+ADD_TIMESTAMP = False  # 是否在文件名添加时间戳
 
 # ======================================================================
 
@@ -371,7 +379,7 @@ class Face2NodesFeatureExtractor(nn.Module):
 
 # ==================== 视频处理器 ====================
 class VideoFaceProcessor:
-    """视频人脸特征提取器"""
+    """视频人脸特征提取器 - 固定提取指定数量的特征"""
     
     def __init__(self, extractor, device='cuda' if torch.cuda.is_available() else 'cpu'):
         self.extractor = extractor
@@ -386,16 +394,48 @@ class VideoFaceProcessor:
         
         print("✓ 视频处理器初始化完成")
     
+    def preprocess_frame(self, frame):
+        """预处理整张图片（当人脸检测失败时使用）"""
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        pil_image = Image.fromarray(frame_rgb)
+        
+        transform = transforms.Compose([
+            transforms.Resize((100, 100)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                               std=[0.229, 0.224, 0.225])
+        ])
+        
+        return transform(pil_image).unsqueeze(0).to(self.device)
+    
     def detect_faces(self, frame):
-        """检测视频帧中的人脸"""
+        """检测视频帧中的人脸 - 优化版"""
         if self.face_cascade.empty():
             h, w = frame.shape[:2]
             return [(0, 0, w, h)]
-        
+    
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = cv2.equalizeHist(gray)  # 直方图均衡化，提高对比度
+    
+        # 使用更宽松的参数
         faces = self.face_cascade.detectMultiScale(
-            gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60)
+            gray, 
+            scaleFactor=1.05,        # 更小的缩放因子（更精细的搜索）
+            minNeighbors=3,           # 降低邻居数要求（允许更多检测）
+            minSize=(40, 40),         # 减小最小人脸尺寸
+            maxSize=(300, 300),       # 设置最大人脸尺寸
+            flags=cv2.CASCADE_SCALE_IMAGE
         )
+    
+        # 如果还是没检测到，尝试不同的参数
+        if len(faces) == 0:
+            faces = self.face_cascade.detectMultiScale(
+                gray, 
+                scaleFactor=1.1,
+                minNeighbors=2,
+                minSize=(30, 30)
+            )
+    
         return faces
     
     def preprocess_face(self, face_img):
@@ -412,118 +452,270 @@ class VideoFaceProcessor:
         
         return transform(pil_image).unsqueeze(0).to(self.device)
     
-    def process_video(self, video_path, output_dir, sample_rate=5):
+    def process_video(self, video_path, output_dir, target_features=15, add_timestamp=True):
+        """
+        处理单个视频文件 - 严格提取指定数量的特征
+        
+        Args:
+            video_path: 视频文件路径
+            output_dir: 输出目录
+            target_features: 目标特征数量（默认15组）
+            add_timestamp: 是否添加时间戳
+        """
+        start_time = time.time()
+        
         # 检查视频文件                        
         if not os.path.exists(video_path):
             print(f"❌ 错误：视频文件不存在 - {video_path}")
             return None
-    
+
         # 创建输出目录
         os.makedirs(output_dir, exist_ok=True)
-        video_name = os.path.splitext(os.path.basename(video_path))[0]
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
+        # 生成输出文件名
+        video_name = os.path.splitext(os.path.basename(video_path))[0]
+    
+        if add_timestamp:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_filename = f"{video_name}_features_{timestamp}.npy"
+        else:
+            output_filename = f"{video_name}_features.npy"
+        
+        feature_file = os.path.join(output_dir, output_filename)
+
         # 打开视频
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             print(f"❌ 错误：无法打开视频文件 - {video_path}")
             return None
-    
+
         # 获取视频信息
         fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    
-        print(f"\n📹 视频信息:")
-        print(f"  文件: {video_path}")
+        video_duration = total_frames / fps if fps > 0 else 0
+
+        print(f"\n📹 处理视频: {os.path.basename(video_path)}")
         print(f"  总帧数: {total_frames}")
         print(f"  帧率: {fps:.2f} fps")
-        print(f"  采样率: 每{sample_rate}帧")
-    
+        print(f"  视频时长: {video_duration:.2f} 秒")
+        print(f"  目标特征数: {target_features}")
+        
+        # 计算均匀采样的时间点
+        target_times = np.linspace(0, video_duration, target_features, endpoint=False)
+        target_frames = [int(t * fps) for t in target_times]
+        print(f"  采样时间点: {[f'{t:.1f}s' for t in target_times]}")
+
         # 准备保存结果
         all_features = []
         all_timestamps = []
         all_frame_ids = []
-    
+
         frame_count = 0
         processed_count = 0
-    
-        print(f"\n开始处理视频...")
-    
+        
+        # 创建要处理的帧集合
+        frames_to_process = set(target_frames)
+
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
-        
-            if frame_count % sample_rate == 0:
-                faces = self.detect_faces(frame)
             
-                for (x, y, w, h) in faces:
-                    face_roi = frame[y:y+h, x:x+w]
+            # 检查当前帧是否需要处理
+            if frame_count in frames_to_process:
+                current_time = frame_count / fps
+                print(f"  处理目标 {processed_count+1}/{target_features} - 帧 {frame_count} (时间 {current_time:.1f}s)")
                 
+                # 检测人脸
+                faces = self.detect_faces(frame)
+                feature_extracted = False
+                
+                # 如果有检测到人脸，使用最大的人脸
+                if len(faces) > 0:
+                    # 取最大的人脸（假设主要人物）
+                    largest_face = max(faces, key=lambda f: f[2] * f[3])
+                    x, y, w, h = largest_face
+                    
+                    # 提取人脸区域
+                    face_roi = frame[y:y+h, x:x+w]
+                    
                     try:
                         input_tensor = self.preprocess_face(face_roi)
-                    
+                        
                         with torch.no_grad():
                             features = self.extractor(input_tensor)
-                    
-                        timestamp_sec = frame_count / fps
+                        
                         all_features.append(features.cpu().numpy().squeeze())
-                        all_timestamps.append(timestamp_sec)
+                        all_timestamps.append(current_time)
                         all_frame_ids.append(frame_count)
-                    
+                        
                         processed_count += 1
-                    
+                        feature_extracted = True
+                        print(f"    ✓ 成功提取人脸特征 {processed_count}/{target_features}")
+                        
                     except Exception as e:
-                        print(f"  帧 {frame_count} 特征提取失败: {e}")
+                        print(f"    ✗ 人脸特征提取失败: {e}")
+                
+                # 如果人脸检测失败或特征提取失败，使用整张图片
+                if not feature_extracted:
+                    try:
+                        input_tensor = self.preprocess_frame(frame)
+                        
+                        with torch.no_grad():
+                            features = self.extractor(input_tensor)
+                        
+                        all_features.append(features.cpu().numpy().squeeze())
+                        all_timestamps.append(current_time)
+                        all_frame_ids.append(frame_count)
+                        
+                        processed_count += 1
+                        print(f"    ✓ 使用整张图片提取特征 {processed_count}/{target_features}")
+                        
+                    except Exception as e:
+                        print(f"    ✗ 整张图片提取失败: {e}")
+                        # 如果还是失败，用零向量填充
+                        all_features.append(np.zeros(OUTPUT_DIM))
+                        all_timestamps.append(current_time)
+                        all_frame_ids.append(frame_count)
+                        processed_count += 1
+                        print(f"    ⚠️ 使用零向量填充 {processed_count}/{target_features}")
             
-                if processed_count % 10 == 0:
-                    progress = frame_count / total_frames * 100
-                    print(f"  进度: {progress:.1f}% | 已提取 {processed_count} 个人脸")
-        
             frame_count += 1
-    
+            
+            # 如果已经处理完所有目标帧，提前退出
+            if processed_count >= target_features:
+                break
+
         cap.release()
-    
-        print(f"\n✅ 视频处理完成！")
-        print(f"  总处理帧数: {frame_count}")
-        print(f"  提取特征数: {len(all_features)}")
-     
-        if len(all_features) == 0:
-            print("⚠️ 未检测到人脸")
-            return None
-    
+
+        # 确保正好有 target_features 个特征
+        if len(all_features) < target_features:
+            print(f"\n⚠️ 特征数不足 ({len(all_features)}/{target_features})，进行填充...")
+            while len(all_features) < target_features:
+                if len(all_features) > 0:
+                    # 用最后一个特征填充
+                    all_features.append(all_features[-1])
+                    all_timestamps.append(all_timestamps[-1])
+                    all_frame_ids.append(all_frame_ids[-1])
+                else:
+                    # 如果没有任何特征，用零向量
+                    all_features.append(np.zeros(OUTPUT_DIM))
+                    all_timestamps.append(0.0)
+                    all_frame_ids.append(0)
+                print(f"   填充第 {len(all_features)}/{target_features}")
+        
+        elif len(all_features) > target_features:
+            print(f"\n⚠️ 特征数过多 ({len(all_features)}/{target_features})，截取前{target_features}个")
+            all_features = all_features[:target_features]
+            all_timestamps = all_timestamps[:target_features]
+            all_frame_ids = all_frame_ids[:target_features]
+
         # 转换为numpy数组
         features_array = np.array(all_features)
-    
-        # ========== 只保存.npy文件 ==========
-        print(f"\n💾 保存特征文件...")
-    
-        feature_file = os.path.join(output_dir, f"{video_name}_features_{timestamp}.npy")
+
+        # 保存特征文件
         np.save(feature_file, features_array)
-        print(f"  ✓ 特征文件: {feature_file}")
-        print(f"    特征矩阵形状: {features_array.shape}")
+        
+        elapsed_time = time.time() - start_time
+        
+        print(f"\n✅ 视频处理完成！")
+        print(f"  特征文件: {feature_file}")
+        print(f"  特征矩阵形状: {features_array.shape}")
+        print(f"  特征数: {len(all_features)}/{target_features}")
+        print(f"  时间范围: {all_timestamps[0]:.2f}s - {all_timestamps[-1]:.2f}s")
+        print(f"  用时: {elapsed_time:.1f}秒")
+
+        return feature_file
     
-        # ========== 删除JSON和CSV保存代码 ==========
-    
-        print(f"\n📊 特征统计:")
-        print(f"  均值: {features_array.mean():.6f}")
-        print(f"  标准差: {features_array.std():.6f}")
-    
-        return feature_file  # 只返回文件路径
+    def process_video_batch(self, video_paths, output_dir, target_features=15, add_timestamp=True):
+        """批量处理多个视频 - 每个视频固定提取target_features组特征"""
+        print(f"\n{'='*60}")
+        print(f"开始批量处理 {len(video_paths)} 个视频")
+        print(f"每个视频固定提取 {target_features} 组特征")
+        print(f"{'='*60}")
+        
+        results = []
+        total_start_time = time.time()
+        
+        for i, video_path in enumerate(video_paths, 1):
+            print(f"\n[{i}/{len(video_paths)}] 处理视频...")
+            video_start_time = time.time()
+            
+            feature_file = self.process_video(
+                video_path=video_path,
+                output_dir=output_dir,
+                target_features=target_features,
+                add_timestamp=add_timestamp
+            )
+            
+            video_elapsed = time.time() - video_start_time
+            
+            if feature_file:
+                results.append({
+                    'video': os.path.basename(video_path),
+                    'feature_file': feature_file,
+                    'status': 'success',
+                    'time': f'{video_elapsed:.1f}s'
+                })
+            else:
+                results.append({
+                    'video': os.path.basename(video_path),
+                    'feature_file': None,
+                    'status': 'failed',
+                    'time': f'{video_elapsed:.1f}s'
+                })
+        
+        total_elapsed = time.time() - total_start_time
+        
+        # 打印汇总结果
+        print(f"\n{'='*60}")
+        print(f"批量处理完成！")
+        print(f"总用时: {total_elapsed:.1f}秒")
+        print(f"成功: {sum(1 for r in results if r['status'] == 'success')} 个")
+        print(f"失败: {sum(1 for r in results if r['status'] == 'failed')} 个")
+        print(f"{'='*60}")
+        
+        return results
 
 
 # ==================== 主程序 ====================
 
+def get_video_paths():
+    """获取所有需要处理的视频路径"""
+    video_paths = []
+    
+    # 检查是否定义了 VIDEO_DIR
+    if 'VIDEO_DIR' in globals() and VIDEO_DIR and os.path.exists(VIDEO_DIR):
+        print(f"使用视频目录模式: {VIDEO_DIR}")
+        # 支持的视频格式
+        video_extensions = ['*.mp4', '*.avi', '*.mov', '*.mkv', '*.flv', '*.wmv']
+        for ext in video_extensions:
+            video_paths.extend(glob.glob(os.path.join(VIDEO_DIR, ext)))
+            video_paths.extend(glob.glob(os.path.join(VIDEO_DIR, ext.upper())))
+        video_paths = list(set(video_paths))  # 去重
+        video_paths.sort()  # 排序
+        print(f"找到 {len(video_paths)} 个视频文件")
+    
+    # 检查是否定义了 VIDEO_PATH（单个视频）
+    elif 'VIDEO_PATH' in globals() and VIDEO_PATH:
+        print("使用单个视频模式...")
+        if os.path.exists(VIDEO_PATH):
+            video_paths = [VIDEO_PATH]
+        else:
+            print(f"错误: 视频文件不存在 - {VIDEO_PATH}")
+    
+    return video_paths
+
+
 def main():
-    """主程序 - 纯视频处理，无需用户输入"""
+    """主程序 - 批量视频处理，每个视频固定提取15组特征"""
     
     print("="*60)
-    print("Face2Nodes 视频特征提取系统")
+    print("Face2Nodes 批量视频特征提取系统")
     print("="*60)
     print(f"模型路径: {MODEL_PATH}")
-    print(f"视频路径: {VIDEO_PATH}")
     print(f"输出目录: {OUTPUT_DIR}")
-    print(f"采样率: 每{SAMPLE_RATE}帧")
+    print(f"目标特征数: {TARGET_FEATURES} 组/视频")
     print("="*60)
     
     # 检查模型文件
@@ -531,10 +723,17 @@ def main():
         print(f"❌ 错误：模型文件不存在 - {MODEL_PATH}")
         return
     
-    # 检查视频文件
-    if not os.path.exists(VIDEO_PATH):
-        print(f"❌ 错误：视频文件不存在 - {VIDEO_PATH}")
+    # 获取所有需要处理的视频
+    video_paths = get_video_paths()
+    
+    if not video_paths:
+        print("❌ 错误：没有找到需要处理的视频文件")
+        print("请配置 VIDEO_DIR 或 VIDEO_PATH")
         return
+    
+    print(f"\n找到 {len(video_paths)} 个待处理视频:")
+    for i, v in enumerate(video_paths, 1):
+        print(f"  {i}. {os.path.basename(v)}")
     
     # 初始化设备
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -558,24 +757,35 @@ def main():
     print("\n初始化视频处理器...")
     video_processor = VideoFaceProcessor(extractor, device=device)
     
-    # 处理视频
-    print("\n开始处理视频...")
-    start_time = time.time()
+    # 批量处理视频 - 固定15组特征
+    print("\n开始批量处理视频...")
     
-    feature_file = video_processor.process_video(
-        video_path=VIDEO_PATH,
+    results = video_processor.process_video_batch(
+        video_paths=video_paths,
         output_dir=OUTPUT_DIR,
-        sample_rate=SAMPLE_RATE
+        target_features=TARGET_FEATURES,  # 固定15组
+        add_timestamp=ADD_TIMESTAMP
     )
     
-    elapsed_time = time.time() - start_time
-    
-    if feature_file:
-        print(f"\n✅ 处理成功！")
-        print(f"  总用时: {elapsed_time:.1f}秒")
-        print(f"  输出文件: {feature_file}")
-    else:
-        print(f"\n❌ 处理失败")
+    # 保存处理结果汇总
+    if results:
+        summary_file = os.path.join(OUTPUT_DIR, f"batch_processing_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+        
+        summary = {
+            'timestamp': datetime.now().isoformat(),
+            'model_path': MODEL_PATH,
+            'target_features': TARGET_FEATURES,
+            'output_dim': OUTPUT_DIM,
+            'total_videos': len(results),
+            'success_count': sum(1 for r in results if r['status'] == 'success'),
+            'failed_count': sum(1 for r in results if r['status'] == 'failed'),
+            'results': results
+        }
+        
+        with open(summary_file, 'w', encoding='utf-8') as f:
+            json.dump(summary, f, indent=2, ensure_ascii=False)
+        
+        print(f"\n处理结果汇总已保存: {summary_file}")
 
 
 if __name__ == '__main__':
