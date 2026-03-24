@@ -1,10 +1,4 @@
 
-
-# my model for C2PRI-Net
-# time : 2023.11.27
-# author: MaZhuang
-
-
 import argparse
 import torch.nn as nn
 import torch
@@ -15,16 +9,28 @@ import scipy.io
 from scipy.io import loadmat
 import numpy as np
 import torch.nn.init as init
+
 from DataLoader import DataLoader
 from config import Config
+args = Config(dataset_name='DEAP')
 
 
 if torch.cuda.is_available():
     device = torch.device("cuda")
 else:
     device = torch.device("cpu")
+#有挺多模块我看后面没有用到，但是原作者保留，我也没删，有数字编号的是用到的
+#1.SE模块
+#2.SDLN，对psd拓扑图处理
+#3.位置编码
+#4.eeg统计特征编码
+#5.外周特征编码
+#6.多头注意力融合
+#7.总体：首先psd图用SDLN做处理，peri用peri backbone，eeg统计用eegbackbone，然后进入HF_ICMA
+# 输出（bs，512×3）为x_s1，这个输出经训练头得到z_t，然后经过stage2_module得到x_s2,
+# x_s2再经投影头得到z_c，x_s2经情感头得到e。总共模型输出者五个量。
 
-
+#权重初始化设置
 def weights_init(m):
     if isinstance(m,nn.Conv2d):
         nn.init.normal_(m.weight, 0.0, 0.02)
@@ -46,7 +52,7 @@ def custom_weights_init(m):
         nn.init.xavier_normal_(m.weight)
         if m.bias is not None:
             nn.init.constant_(m.bias, 0)
-
+#全连接神经网络MLP
 class FC_Backbone(nn.Module):
     def __init__(self, input_size, layer_sizes):
         super(FC_Backbone, self).__init__()
@@ -76,6 +82,7 @@ class FC_Backbone(nn.Module):
             for m in layer.modules():
                 weights_init(m)
 
+#卷积
 class BasicConv2d(nn.Module):  
     def __init__(self, in_channels, out_channels, **kwargs):
         super(BasicConv2d, self).__init__()
@@ -86,7 +93,7 @@ class BasicConv2d(nn.Module):
         x = self.conv(x)
         x = self.relu(x)
         return x
-    
+#1.通道注意力（Squeeze&excitation）：先全局平均池化展平再压缩，后面卷积会用到
 class SE_Module(nn.Module):
     def __init__(self):
         super(SE_Module, self).__init__()
@@ -104,7 +111,7 @@ class SE_Module(nn.Module):
         x = self.features(x)
         output = x.view(x.size(0), 64, 1, 1)
         return output
-
+#2.用于对psd拓扑图进行卷积处理
 class SDLN(nn.Module):
     def __init__(self): 
         super(SDLN, self).__init__()
@@ -147,7 +154,8 @@ class SDLN(nn.Module):
             elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
-          
+
+#3.位置编码，按照公式写的，后面eeg统计特征和peri特征都会用到        
 class PositionalEncoding(nn.Module):
     "Implement the PE function."
 
@@ -169,13 +177,15 @@ class PositionalEncoding(nn.Module):
     def forward(self, x):
         x = x + self.pe[:, : x.size(1)].requires_grad_(False)
         return self.dropout(x)
-       
+    
+#4.eeg统计特征编码，backbone_hidden=256,送入transformer（LN-8头注意力-dropout=0.1-残差连接
+#-LN-FFN-dropout=0.1-残差连接-输出）
 class Channel_Wise_TransformerEncoder_Backbon_eeg_stat(nn.Module):
     def __init__(self,args):
         super().__init__()  # Change this line
 
-        self.channel_feat_dim=args.eeg_stat_channel_feat_dim
-        self.num_channel=args.EEG_channel
+        self.channel_feat_dim=args.eeg_stat_channel_feat_dim#7
+        self.num_channel=args.EEG_channel#32
 
         if args.positional_encoding:
             self.positional_encoding=PositionalEncoding(d_model=args.backbone_hidden,dropout=0)
@@ -211,12 +221,12 @@ class Channel_Wise_TransformerEncoder_Backbon_eeg_stat(nn.Module):
             self.dim_down = nn.Linear(self.num_channel*args.backbone_hidden,args.backbone_hidden)
 
     def forward(self,x):
-            # (bs,62,12) / (bs,33,1)
+          
             assert len(x.shape)==3 and x.shape[1]==self.num_channel and x.shape[2]==self.channel_feat_dim
-            x=self.dim_up(x) # (bs,62,fusion_hidden) / (bs,33,fusion_hidden)
+            x=self.dim_up(x) 
             if self.positional_encoding!=None:
                 x=self.positional_encoding(x)
-            x=self.encoder(x) # (bs,62,fusion_hidden) / (bs,33,fusion_hidden)
+            x=self.encoder(x) 
 
             # if use HF_ICMA:
             if self.dim_down!=None:
@@ -227,12 +237,14 @@ class Channel_Wise_TransformerEncoder_Backbon_eeg_stat(nn.Module):
             #     x = self.dim_down(x.view(x.shape[0], -1))  # (bs, fusion_hidden)
     
             return x
-    
+
+#5.外周特征编码，backbone_hidden=256,送入transformer（LN-8头注意力-dropout=0.1-残差连接
+#-LN-FFN-dropout=0.1-残差连接-输出），还做了自相关  
 class Channel_Wise_TransformerEncoder_Backbon_peri(nn.Module):
     def __init__(self, args):
         super(Channel_Wise_TransformerEncoder_Backbon_peri, self).__init__()
-        self.channel_feat_dim = args.eeg_peri_channel_feat_dim  # 7
-        self.num_channel = args.peri_feat_dim
+        self.channel_feat_dim = args.eeg_peri_channel_feat_dim  # 1
+        self.num_channel = args.peri_feat_dim#55
 
         if args.positional_encoding:
             self.positional_encoding = PositionalEncoding(d_model=args.backbone_hidden, dropout=0)
@@ -241,6 +253,7 @@ class Channel_Wise_TransformerEncoder_Backbon_peri(nn.Module):
         self.attn_layer = nn.TransformerEncoderLayer(d_model=args.backbone_hidden, nhead=8, dim_feedforward=1024, batch_first=True)
         self.encoder = nn.TransformerEncoder(encoder_layer=self.attn_layer, num_layers=args.num_layer)
         self.dim_up = nn.Linear(self.channel_feat_dim, args.backbone_hidden)
+        self.dim_up1 = nn.Linear(self.num_channel, args.backbone_hidden)
 
         if args.fusion_mothod == 'DFAF':
             self.dim_down = None
@@ -267,10 +280,10 @@ class Channel_Wise_TransformerEncoder_Backbon_peri(nn.Module):
 
     def forward(self, x):
         assert len(x.shape) == 3 and x.shape[1] == self.num_channel and x.shape[2] == self.channel_feat_dim
-        x1 = self.dim_up(x)  # (bs,62,fusion_hidden) / (bs,33,fusion_hidden)
+        x1 = self.dim_up(x) 
         if self.positional_encoding is not None:
             x1 = self.positional_encoding(x1)
-            x1 = self.encoder(x1)  # (bs,62,fusion_hidden) / (bs,33,fusion_hidden)
+        x1 = self.encoder(x1)  #transformer处理
 
         if self.dim_down is not None:
             x1 = self.dim_down(x1.view(x1.shape[0], -1))  # (bs,fusion_hidden)
@@ -279,13 +292,11 @@ class Channel_Wise_TransformerEncoder_Backbon_peri(nn.Module):
         x2 = x
         x2 = torch.bmm(x2, x2.transpose(1, 2))  # x2 * x2.T
         x2 = torch.bmm(x2, x2)  # x2 * (x2 * x2.T)
-    
-        x2 = torch.mean(x2, dim=(-1, -2), keepdim=True)
-        x2 = self.dim_up(x2)# Ensure x2 has the same dimensions as x1 after processing
+        x2 = self.dim_up1(x2)  # Ensure x2 has the same dimensions as x1 after processing
 
         if self.positional_encoding is not None:
             x2 = self.positional_encoding(x2)
-        x2 = self.encoder(x2)
+        x2 = self.encoder(x2)#transformer处理
 
         if self.dim_down is not None:
             x2 = self.dim_down(x2.view(x2.shape[0], -1))
@@ -294,7 +305,7 @@ class Channel_Wise_TransformerEncoder_Backbon_peri(nn.Module):
         x = x1 + x2
 
         return x
-
+#交叉网络
 class CrossNet(torch.nn.Module):
     def __init__(self, in_features, layer_num, device, batch_size):
         super(CrossNet, self).__init__()
@@ -332,7 +343,7 @@ class CrossNet(torch.nn.Module):
         # print('output的size:{}'.format(x_l.shape))
         # print(output)
         return output
-
+#注意力融合
 class AttentionFusion(nn.Module):
     def __init__(self, fused_dim):
         super(AttentionFusion, self).__init__()
@@ -357,6 +368,7 @@ class AttentionFusion(nn.Module):
     def init_weights(self):
         nn.init.normal_(self.attention_weights,0.0,0.01)
 
+#6.多头注意力融合
 class HF_ICMA(nn.Module):
     def __init__(self,args):
         super(HF_ICMA, self).__init__()
@@ -365,49 +377,16 @@ class HF_ICMA(nn.Module):
         self.eeg_feature_map_dim_change=nn.Linear(256,args.fusion_hidden)
         self.eeg_feature_dim_change=nn.Linear(args.backbone_hidden,args.fusion_hidden) #  (256,512)
         self.peri_dim_change=nn.Linear(args.backbone_hidden,args.fusion_hidden) #  (256,512)
-
+        #512维，8头，batch_first=Ture
         self.eeg_feature_map_attn=nn.MultiheadAttention(embed_dim=args.fusion_hidden,num_heads=8,batch_first=True)
         self.eeg_feature_attn1=nn.MultiheadAttention(embed_dim=args.fusion_hidden,num_heads=8,batch_first=True)
         self.eeg_feature_attn2=nn.MultiheadAttention(embed_dim=args.fusion_hidden,num_heads=8,batch_first=True)
         self.peri_attn=nn.MultiheadAttention(embed_dim=args.fusion_hidden,num_heads=8,batch_first=True)
-
+        #降维，统一到512
         self.eeg_feature_map_dim_down=nn.Linear(4*args.fusion_hidden,args.fusion_hidden)
         self.eeg_feature_dim_down=nn.Linear(args.EEG_channel*args.fusion_hidden,args.fusion_hidden)
         self.peri_dim_down=nn.Linear(args.peri_feat_dim*args.fusion_hidden,args.fusion_hidden)
 
-        
-    def forward(self, eeg_map, eeg, peri):
-        eeg_map = eeg_map.view(eeg_map.shape[0], eeg_map.shape[1], -1).transpose(1, 2)
-        
-        # 维度转换
-        eeg_map = self.eeg_feature_map_dim_change(eeg_map)
-        eeg = self.eeg_feature_dim_change(eeg)
-        peri = self.peri_dim_change(peri)
-
-        # 注意力融合
-        eeg_map_attn_out, _ = self.eeg_feature_map_attn(eeg_map, eeg, eeg)
-        eeg_attn1_out, _ = self.eeg_feature_attn1(eeg, eeg_map, eeg_map)
-        eeg_attn2_out, cross_val = self.eeg_feature_attn2(eeg_attn1_out, peri, peri)
-        
-        eeg_attn2_out = eeg_attn2_out + eeg_attn1_out # 残差
-        peri_attn_out, _ = self.peri_attn(peri, eeg_attn1_out, eeg_attn1_out)
-        peri_attn_out = peri_attn_out + peri # 残差
-
-        # 展平与拼接
-        eeg_map_out = self.eeg_feature_map_dim_down(eeg_map_attn_out.contiguous().view(eeg_map_attn_out.shape[0], -1))
-        eeg_out = self.eeg_feature_dim_down(eeg_attn2_out.contiguous().view(eeg_attn2_out.shape[0], -1))
-        peri_out = self.peri_dim_down(peri_attn_out.contiguous().view(peri_attn_out.shape[0], -1))
-
-        fused_tensor = torch.cat([eeg_map_out, eeg_out, peri_out], dim=-1)
-        return torch.nan_to_num(fused_tensor), cross_val # 增加 nan 保护
-
-    def init_weights(self):
-        # 核心修正：取消嵌套定义
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
         # # 
         # self.classifier = nn.Sequential(
         #     nn.Linear(3*args.fusion_hidden, 512),
@@ -418,26 +397,24 @@ class HF_ICMA(nn.Module):
         # )
 
     def forward(self,eeg_map,eeg,peri):
-        # eeg_map (bs,512,2,2)
-        # eeg (bs,62,fusion_hidden)
-        # peri (bs,31,fusion_hidden)
-        eeg_map=eeg_map.view(eeg_map.shape[0],eeg_map.shape[1],-1) #(bs,512,4)
-        eeg_map=eeg_map.transpose(1,2) # (bs,4,512)
+        
+        eeg_map=eeg_map.view(eeg_map.shape[0],eeg_map.shape[1],-1)
+        eeg_map=eeg_map.transpose(1,2) 
 
-        eeg_map=self.eeg_feature_map_dim_change(eeg_map) # (bs,4,h)
-        eeg=self.eeg_feature_dim_change(eeg) # (bs,62,h)
-        peri=self.peri_dim_change(peri) # (bs,31,h)
-
-        eeg_map_attn_out,_=self.eeg_feature_map_attn(eeg_map,eeg,eeg) # (bs,4,h)
-
-        eeg_attn1_out,_=self.eeg_feature_attn1(eeg,eeg_map,eeg_map) # (bs,62,h)
-
-        eeg_attn2_out,cross_model_aeeention_value=self.eeg_feature_attn2(eeg_attn1_out,peri,peri) # (bs,62,h)
+        eeg_map=self.eeg_feature_map_dim_change(eeg_map)#（bs，4,512）
+        eeg=self.eeg_feature_dim_change(eeg) #（bs，7,512）
+        peri=self.peri_dim_change(peri) #（bs，55,512）
+        #eeg查eeg map
+        eeg_map_attn_out,_=self.eeg_feature_map_attn(eeg_map,eeg,eeg) 
+        #eeg map查eeg
+        eeg_attn1_out,_=self.eeg_feature_attn1(eeg,eeg_map,eeg_map) 
+        #外周查eeg（attn1）
+        eeg_attn2_out,cross_model_aeeention_value=self.eeg_feature_attn2(eeg_attn1_out,peri,peri) 
 
         # residual
         eeg_attn2_out=eeg_attn2_out+eeg_attn1_out
-
-        peri_attn_out,_=self.peri_attn(peri,eeg_attn1_out,eeg_attn1_out) # (bs,31,h)
+        #eeg attn1 查外周
+        peri_attn_out,_=self.peri_attn(peri,eeg_attn1_out,eeg_attn1_out)
         # residual
         peri_attn_out=peri_attn_out+peri
 
@@ -451,7 +428,7 @@ class HF_ICMA(nn.Module):
         peri_attn_out=peri_attn_out.contiguous().view(peri_attn_out.shape[0],-1)
         peri_out=self.peri_dim_down(peri_attn_out) # (bs,h)
 
-        fused_tensor=torch.cat([eeg_map_out,eeg_out,peri_out],dim=-1) # (bs,3h)
+        fused_tensor=torch.cat([eeg_map_out,eeg_out,peri_out],dim=-1) # (bs,3h)  h=512
 
         return fused_tensor,cross_model_aeeention_value
 
@@ -486,7 +463,9 @@ class HF_ICMA(nn.Module):
     #         init.xavier_normal_(self.eeg_feature_map_dim_down.weight)
     #         init.xavier_normal_(self.eeg_feature_dim_down.weight)
     #         init.xavier_normal_(self.peri_dim_down.weight)
-       
+#7.总体：首先psd图用SDLN做处理，peri用peri backbone，eeg统计用eegbackbone，然后进入HF_ICMA
+# 输出（bs，512×3）为x_s1，这个输出经训练头得到z_t，然后经过stage2_module得到x_s2,
+# x_s2再经投影头得到z_c，x_s2经情感头得到e。总共模型输出者五个量。
 class Fusion_Model(nn.Module):
     def __init__(self,args):
         super(Fusion_Model, self).__init__()

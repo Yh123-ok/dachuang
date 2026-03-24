@@ -27,7 +27,7 @@ def get_coords_optimized():
         coords.append(pos_dict[name][:2])
     
     coords = np.array(coords)
-    # 稍微扩大映射范围到 0.48，使电极分布更饱满
+  
     scaler = MinMaxScaler(feature_range=(-0.48, 0.48))
     coords = scaler.fit_transform(coords)
     return coords[:, 0], coords[:, 1]
@@ -44,19 +44,22 @@ all_psds = np.load(os.path.join(A_RESULT_DIR, 'final_psds.npy'))
 all_stats = np.load(os.path.join(A_RESULT_DIR, 'final_stats.npy')) 
 all_peris = np.load(os.path.join(A_RESULT_DIR, 'final_peris.npy')) 
 
-#  4. 改进的插值循环 
+#  4. 插值循环 
 PSD_features = np.zeros((19200, 5, 32, 32))
 
 print("Starting Interpolation (Optimized v4 style)...")
 for k in range(19200):
-    # 统一使用 log10，并加入 epsilon 防止数值错误
-    psd_sample = np.log10(all_psds[k] + 1e-8).reshape(5, 32)
+   
+    psd_sample =all_psds[k].reshape(5, 32)
     
     for b in range(5):
-        # 增加 smooth=0.1，这是解决 B 组性能问题的核心细节
-        rbf = Rbf(x_loc, y_loc, psd_sample[b], function='thin_plate', smooth=0.1)
+        med = np.median(psd_sample[b])
+        std = np.std(psd_sample[b])
+        # 如果某个电极能量超过中位数 + 3倍标准差，通常就是肌电或坏道
+        threshold = med + 3 * std
+        psd_sample[b][psd_sample[b] > threshold] = med
+        rbf = Rbf(x_loc, y_loc, psd_sample[b], function='thin_plate', smooth=0.05)
         zi = rbf(grid_x, grid_y)
-        
         zi = np.flipud(zi)
         zi[mask] = np.nan # 暂时标记背景为 NaN
         PSD_features[k, b, :, :] = zi
@@ -77,7 +80,7 @@ for b in range(5):
             std_val = np.std(sub_band_data[valid_idx])
             sub_band_data[valid_idx] = (sub_band_data[valid_idx] - mean_val) / (std_val + 1e-8)
         
-        # 标准化后，背景填充为 0（这样卷积层会忽略背景）
+        # 标准化后，背景填充为 0
         sub_band_data[np.isnan(sub_band_data)] = 0
         PSD_features[start:end, b, :, :] = sub_band_data
 

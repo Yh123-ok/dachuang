@@ -153,7 +153,7 @@ def dataset_loaders(dataset_name, batch_size=128, label_type='valence',
         # A. 划分训练/测试 ID
         train_indices = [i for i in range(num_subjects) if i != test_idx]
         
-        # B. 训练集拟合 Scaler (绝对不看测试集！)
+        # B. 训练集拟合 Scaler (不看测试集)
         stat_scaler = RobustScaler()
         peri_scaler = RobustScaler()
         stat_scaler.fit([stats_list[i] for i in train_indices])
