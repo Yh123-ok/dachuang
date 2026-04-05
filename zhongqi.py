@@ -1,4 +1,3 @@
-# %%
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -7,6 +6,7 @@ from sklearn.model_selection import KFold
 import numpy as np
 import os
 import scipy.io as sio
+import gc  # 引入垃圾回收机制
 
 # ===============================
 # 0. 全局计算加速配置
@@ -47,8 +47,9 @@ class AdaptiveGNN(nn.Module):
 
         out = out.transpose(1, 2).reshape(B, N, -1)
         return self.norm(self.proj(out) + x)
+
 # ===============================
-# 2. ✅ 修改后的：动态图融合层 (Dynamic Graph Fusion)
+# 2. 动态图融合层 (Dynamic Graph Fusion)
 # ===============================
 class DynamicGraphFusion(nn.Module):
     def __init__(self, dim, k_neighbors=10):
@@ -73,13 +74,14 @@ class DynamicGraphFusion(nn.Module):
         
         # 稀疏化
         if self.k_neighbors < N:
-            mask = torch.zeros_like(sim_matrix)
+            # ✅ 修复 Kernel 崩溃点 1: 改用 bool 类型的 mask 防止精度覆盖问题
+            mask = torch.zeros_like(sim_matrix, dtype=torch.bool)
             topk_val, topk_idx = torch.topk(sim_matrix, k=self.k_neighbors, dim=-1)
-            mask.scatter_(2, topk_idx, 1.0)
+            mask.scatter_(2, topk_idx, True)
             
-            # ✅ 修复核心：使用当前数据类型的最小边界值，防止 float16 溢出
-            min_val = torch.finfo(sim_matrix.dtype).min
-            sim_matrix = sim_matrix.masked_fill(mask == 0, min_val)
+            # ✅ 修复 Kernel 崩溃点 2: 改用 -1e4 而不是 float16.min，防止 AMP 下 softmax 下溢产生 NaN 引发底层断言失败
+            min_val = -1e4 
+            sim_matrix = sim_matrix.masked_fill(~mask, min_val)
             
         adj = F.softmax(sim_matrix, dim=-1)
         adj = self.dropout(adj)
@@ -92,7 +94,7 @@ class DynamicGraphFusion(nn.Module):
         return self.norm(x + self.act(out))
 
 # ===============================
-# 3. 主模型 MH-DGFNet (契合 GNN-DGF 主题)
+# 3. 主模型 MH-DGFNet
 # ===============================
 class MH_DGFNet_Full(nn.Module):
     def __init__(self, hidden_dim=64):
@@ -107,7 +109,6 @@ class MH_DGFNet_Full(nn.Module):
             'Central': [5, 16, 17, 18, 19, 23, 26, 27, 31]
         }
 
-        # ===== 特征提取器 =====
         self.eeg_proj = nn.Sequential(nn.Linear(7, hidden_dim), nn.ELU())
         self.pos_embed = nn.Parameter(torch.randn(1, 32, hidden_dim))
         self.eeg_gnn = nn.Sequential(
@@ -134,21 +135,14 @@ class MH_DGFNet_Full(nn.Module):
             nn.Linear(512, 4 * hidden_dim)
         )
 
-        # ===== ✅ 图节点与模态嵌入 (Modality Embeddings) =====
-        # 图中有4种不同的模态来源，赋予它们不同的模态ID编码
         self.modality_embed = nn.Parameter(torch.randn(4, hidden_dim))
-        
-        # 全局超级节点 (类似于 CLS，但作为图的汇聚中枢)
         self.super_node = nn.Parameter(torch.randn(1, 1, hidden_dim))
 
-        # ===== ✅ 动态图融合层 (DGF) =====
-        # 替换掉了与主题不符的 Transformer
         self.dgf_layers = nn.Sequential(
             DynamicGraphFusion(hidden_dim, k_neighbors=12),
             DynamicGraphFusion(hidden_dim, k_neighbors=12)
         )
 
-        # ===== 输出头 =====
         self.v_head = nn.Sequential(
             nn.Linear(hidden_dim, 32), nn.LayerNorm(32), nn.GELU(), nn.Dropout(0.3), nn.Linear(32, 2)
         )
@@ -157,38 +151,30 @@ class MH_DGFNet_Full(nn.Module):
         )
 
     def forward(self, maps, stats, peri, visual):
-        # 1. 提取各个模态的节点特征
         h_eeg = self.eeg_proj(stats) + self.pos_embed
         h_eeg = self.eeg_gnn(h_eeg)
 
-        # 脑区聚合 -> 5 个 EEG 节点
         h_neuro = torch.stack([
             F.elu(self.region_ops[r](h_eeg[:, idx, :].mean(1)))
             for r, idx in self.regions.items()
-        ], dim=1) # [B, 5, H]
+        ], dim=1) 
 
-        h_ms = self.ms_enc(maps).view(-1, 8, self.hidden_dim)     # 8 个节点
-        h_peri = self.peri_enc(peri).view(-1, 8, self.hidden_dim) # 8 个节点
-        h_vis = self.vis_enc(visual).view(-1, 4, self.hidden_dim) # 4 个节点
+        h_ms = self.ms_enc(maps).view(-1, 8, self.hidden_dim)    
+        h_peri = self.peri_enc(peri).view(-1, 8, self.hidden_dim) 
+        h_vis = self.vis_enc(visual).view(-1, 4, self.hidden_dim) 
 
-        # 2. ✅ 加入模态专属嵌入，解决异构图融合的“身份混乱”问题
         h_neuro = h_neuro + self.modality_embed[0]
         h_ms = h_ms + self.modality_embed[1]
         h_peri = h_peri + self.modality_embed[2]
         h_vis = h_vis + self.modality_embed[3]
 
-        # 3. 组装多模态全连接图 (25个模态节点 + 1个超级节点 = 26个节点)
         combined_nodes = torch.cat([h_neuro, h_ms, h_peri, h_vis], dim=1) 
         
         B = combined_nodes.size(0)
         super_n = self.super_node.expand(B, -1, -1)
         graph_nodes = torch.cat([super_n, combined_nodes], dim=1)
 
-        # 4. ✅ 动态图融合 (DGF)
         fused_nodes = self.dgf_layers(graph_nodes)
-
-        # 5. 图池化与输出
-        # 超级节点聚合了全局信息，并加上其他图节点的平均值，增强鲁棒性
         graph_repr = fused_nodes[:, 0] + fused_nodes[:, 1:].mean(dim=1)
 
         v_logits = self.v_head(graph_repr)
@@ -197,7 +183,7 @@ class MH_DGFNet_Full(nn.Module):
         return v_logits, a_logits
 
 # ===============================
-# 以下数据加载和训练流程保持不变 (已做少量稳定性优化)
+# 数据加载：优化内存占用，避免 System OOM
 # ===============================
 class DeapLoaderRAM(Dataset):
     def __init__(self, npz_path, mat_path, visual_npy_path, files):
@@ -208,6 +194,7 @@ class DeapLoaderRAM(Dataset):
         self.keep_last = 8  
 
         print(f"加载数据：启用时间截断，每个 Trial 仅保留后 {self.keep_last} 个高光情绪片段...")
+        print("✅ 启用极端情绪过滤：<3 为 Low(0)，>7 为 High(1)，3~7 之间将被标记为 -1 并在训练中忽略。")
 
         def norm(x):
             return (x - x.mean(axis=0)) / (x.std(axis=0) + 1e-6)
@@ -216,12 +203,21 @@ class DeapLoaderRAM(Dataset):
             reshaped = arr.reshape(40, self.segments_per_trial, *arr.shape[1:])
             return reshaped[:, -self.keep_last:, ...].reshape(-1, *arr.shape[1:])
 
+        def encode_extreme_labels(scores, low_th=3.0, high_th=7.0):
+            labels = np.full(scores.shape, -1, dtype=int)
+            labels[scores < low_th] = 0
+            labels[scores > high_th] = 1
+            return labels
+
         for sub_idx, f in enumerate(files):
             sid = f[:3]
             lbl = sio.loadmat(os.path.join(mat_path, f"{sid}.mat"))['labels']
             
-            v_list.append(np.repeat((lbl[:, 0] > 5).astype(int), self.keep_last))
-            a_list.append(np.repeat((lbl[:, 1] > 5).astype(int), self.keep_last))
+            v_labels = encode_extreme_labels(lbl[:, 0])
+            a_labels = encode_extreme_labels(lbl[:, 1])
+            
+            v_list.append(np.repeat(v_labels, self.keep_last))
+            a_list.append(np.repeat(a_labels, self.keep_last))
 
             with np.load(os.path.join(npz_path, f)) as d:
                 m_list.append(filter_late_segments(norm(d['eeg_allband_feature_map'])))
@@ -241,15 +237,29 @@ class DeapLoaderRAM(Dataset):
                 v_feats.append(feat[-self.keep_last:, :])
 
             vis_list.append(np.concatenate(v_feats))
-            sub_ids.extend([sub_idx] * (40 * self.keep_last))
+            
+            # 动态计算真实样本数量，防止数据越界引发崩溃
+            num_samples = len(v_list[-1])
+            sub_ids.extend([sub_idx] * num_samples)
 
+        # ✅ 修复 Kernel 崩溃点 3: 分步执行 `concatenate` 并立刻清理原 list，防止 Jupyter 内存雪崩
+        print("正在整理张量分配内存...")
         self.m = torch.from_numpy(np.concatenate(m_list)).float()
+        del m_list; gc.collect()
+        
         self.s = torch.from_numpy(np.concatenate(s_list)).view(-1, 32, 7).float()
+        del s_list; gc.collect()
+        
         self.p = torch.from_numpy(np.concatenate(p_list)).float()
+        del p_list; gc.collect()
+        
         self.vis = torch.from_numpy(np.concatenate(vis_list)).float()
+        del vis_list; gc.collect()
+        
         self.vl = torch.from_numpy(np.concatenate(v_list)).long()
         self.al = torch.from_numpy(np.concatenate(a_list)).long()
         self.sub_l = torch.tensor(sub_ids).long()
+        print("数据加载完毕。")
 
     def __len__(self):
         return len(self.vl)
@@ -257,6 +267,9 @@ class DeapLoaderRAM(Dataset):
     def __getitem__(self, i):
         return self.m[i], self.s[i], self.p[i], self.vis[i], self.vl[i], self.al[i]
 
+# ===============================
+# 训练流程
+# ===============================
 def train_rigorous():
     NPZ_DIR = r'D:\Users\cyz\dc\222'
     MAT_DIR = r'E:\BaiduNetdiskDownload\DEAP\data_preprocessed_matlab'
@@ -285,7 +298,6 @@ def train_rigorous():
         model = MH_DGFNet_Full().to(DEVICE)
 
         EPOCHS = 100
-        # 稍微调低了学习率，因为异构图对高学习率较敏感
         optimizer = torch.optim.AdamW(model.parameters(), lr=5e-4, weight_decay=1e-2)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=1e-5)
         
@@ -294,6 +306,7 @@ def train_rigorous():
         for ep in range(EPOCHS):
             model.train()
             total_loss = 0
+            valid_batches = 0 
 
             for m, s, p, v, lv, la in train_loader:
                 m, s, p, v = m.to(DEVICE, non_blocking=True), s.to(DEVICE, non_blocking=True), p.to(DEVICE, non_blocking=True), v.to(DEVICE, non_blocking=True)
@@ -304,26 +317,39 @@ def train_rigorous():
                 with torch.autocast(device_type='cuda'):
                     ov, oa = model(m, s, p, v)
                     
-                    l_v = F.cross_entropy(ov, lv, label_smoothing=0.1)
-                    l_a = F.cross_entropy(oa, la, label_smoothing=0.1)
-                    loss = 0.6 * l_v + 0.4 * l_a # Arousal 的权重稍微提一点，平衡特征学习
+                    mask_v = lv != -1
+                    mask_a = la != -1
+                    
+                    loss = 0
+                    if mask_v.sum() > 0:
+                        l_v = F.cross_entropy(ov[mask_v], lv[mask_v], label_smoothing=0.1)
+                        loss = loss + 0.6 * l_v
+                    
+                    if mask_a.sum() > 0:
+                        l_a = F.cross_entropy(oa[mask_a], la[mask_a], label_smoothing=0.1)
+                        loss = loss + 0.4 * l_a
 
-                scaler.scale(loss).backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                
-                scaler.step(optimizer)
-                scaler.update()
-                
-                total_loss += loss.item()
+                if torch.is_tensor(loss):
+                    scaler.scale(loss).backward()
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    
+                    scaler.step(optimizer)
+                    scaler.update()
+                    
+                    total_loss += loss.item()
+                    valid_batches += 1
 
             scheduler.step()
             
             if (ep + 1) % 20 == 0 or ep == 0:
-                print(f"Epoch [{ep+1}/{EPOCHS}], Loss: {total_loss/len(train_loader):.4f}, LR: {scheduler.get_last_lr()[0]:.6f}")
+                avg_loss = total_loss / valid_batches if valid_batches > 0 else 0
+                print(f"Epoch [{ep+1}/{EPOCHS}], Loss: {avg_loss:.4f}, LR: {scheduler.get_last_lr()[0]:.6f}")
 
         # ===== 测试验证 =====
         model.eval()
-        vc, ac, total = 0, 0, 0
+        vc, ac = 0, 0
+        total_v, total_a = 0, 0 
 
         with torch.no_grad():
             for m, s, p, v, lv, la in test_loader:
@@ -333,23 +359,36 @@ def train_rigorous():
                 with torch.autocast(device_type='cuda'):
                     ov, oa = model(m, s, p, v)
 
-                vc += (ov.argmax(1) == lv_dev).sum().item()
-                ac += (oa.argmax(1) == la_dev).sum().item()
-                total += lv.size(0)
+                mask_v = lv_dev != -1
+                mask_a = la_dev != -1
 
-        fold_v_acc = vc / total
-        fold_a_acc = ac / total
+                if mask_v.sum() > 0:
+                    vc += (ov[mask_v].argmax(1) == lv_dev[mask_v]).sum().item()
+                    total_v += mask_v.sum().item()
+                
+                if mask_a.sum() > 0:
+                    ac += (oa[mask_a].argmax(1) == la_dev[mask_a]).sum().item()
+                    total_a += mask_a.sum().item()
+
+        fold_v_acc = vc / total_v if total_v > 0 else 0
+        fold_a_acc = ac / total_a if total_a > 0 else 0
         v_results.append(fold_v_acc)
         a_results.append(fold_a_acc)
 
-        print(f"Fold {fold+1} 结束 -> Valence 准确率: {fold_v_acc:.4f}, Arousal 准确率: {fold_a_acc:.4f}")
+        print(f"Fold {fold+1} 结束 -> Valence 准确率: {fold_v_acc:.4f} (基于 {total_v} 个有效样本), Arousal 准确率: {fold_a_acc:.4f} (基于 {total_a} 个有效样本)")
+
+        # ✅ 修复 Kernel 崩溃点 4: 每折训练结束后强制清理显存，防止 CUDA OOM 叠加引发崩溃
+        del model, optimizer, scheduler, train_loader, test_loader
+        torch.cuda.empty_cache()
+        gc.collect()
 
     print("\n" + "="*30)
-    print("最终 5-Fold 交叉验证结果：")
+    print("最终 5-Fold 交叉验证结果 (过滤 3~7 模糊评分后)：")
     print(f"Valence Accuracy: {np.mean(v_results):.4f} ± {np.std(v_results):.4f}")
     print(f"Arousal Accuracy: {np.mean(a_results):.4f} ± {np.std(a_results):.4f}")
     print("="*30)
 
 if __name__ == "__main__":
+    # ✅ Jupyter 中调用此项偶尔会导致线程递归死锁，但在 main 保护下是安全的
     torch.multiprocessing.freeze_support()
     train_rigorous()

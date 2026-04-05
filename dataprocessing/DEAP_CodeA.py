@@ -8,8 +8,13 @@ import neurokit2 as nk
 import numpy as np
 import warnings
 import matplotlib.pyplot as plt
-
-
+#!!!1. 配置 
+#!!!2. EEG统计特征
+#!!!3.提取外周特征
+#!!!4.提取PSD特征
+#!!!5.滤波
+#!!!6.主循环
+#!!!7.归一化
 
 # !!!1. 配置 
 RAW_DATA_PATH = r"E:\BaiduNetdiskDownload\DEAP\data_preprocessed_matlab"
@@ -19,7 +24,7 @@ segment_cnt = 15
 EPS = 1e-8
 
 os.makedirs(SAVE_DIR, exist_ok=True)
-print("🚨 DEAP VERSION: PERI LOG+ZSCORE ENABLED 🚨")
+
 
 # !!!2. EEG统计特征 
 def extract_complex_stats(eeg_seg):
@@ -323,30 +328,21 @@ for subj in range(1, 33):
             #广播对齐 (拼接快慢特征) 
             p_feat_55 = np.concatenate([fast_feat_17, slow_feat_38])
 
-            all_psds.append(psd_feat[:160])
-            all_stats.append(stat_feat[:224])
-            all_peris.append(p_feat_55[:55])
+            all_psds.append(psd_feat[:160].astype(np.float32))
+            all_stats.append(stat_feat[:224].astype(np.float32))
+            all_peris.append(p_feat_55[:55].astype(np.float32))
+
 
 
 
 
 
 # 保存与验证
-
-
-all_psds.append(psd_feat[:160].astype(np.float32))
-all_stats.append(stat_feat[:224].astype(np.float32))
-all_peris.append(p_feat_55[:55].astype(np.float32))
-
 all_psds_arr = np.asarray(all_psds, np.float32)
 all_stats_arr = np.asarray(all_stats, np.float32)
 all_peris_arr = np.asarray(all_peris, np.float32)
 
-
-
-print("\n=== 数据完整性检查（Raw） ===")
-print(f"Peri shape: {all_peris_arr.shape}")
-print(f"NaN count: {np.isnan(all_peris_arr).sum()}")
+#！！！7.归一化
 
 def subject_wise_finalize(data_list, name, samples_per_subj=600):
     """
@@ -389,27 +385,15 @@ def subject_wise_finalize(data_list, name, samples_per_subj=600):
     # 合并回总矩阵
     arr = np.concatenate(final_normed_data, axis=0)
 
-    # 5. 全局平滑 (Soft Squash)
-    # 限制极端离群值，防止 LOSO 训练时某个样本带偏整个梯度
-
-
-    print(f"✅ {name:10} 被试内清洗完成 | 均值: {np.mean(arr):.4f} | 标准差: {np.std(arr):.4f}")
+    # 5. 全局平滑 
+    # 限制极端离群值，限制范围放大对结果影响不大
+    arr = np.tanh(arr / 5.0) * 5.0
     return arr.astype(np.float32)
 
-# --- 应用新的清洗逻辑 ---
-# 注意：确保你的总样本量是 600 的整数倍 (32 * 40 * 15 = 19200)
 all_stats_arr = subject_wise_finalize(all_stats, "EEG_Stats")
 all_peris_arr = subject_wise_finalize(all_peris, "Peri")
-# 在保存前运行
-def check_channel_similarity(data_arr, num_channels=32):
-    # 假设 data_arr 是 (N, channels * features)
-    sample = data_arr[0].reshape(num_channels, -1)
-    corr = np.corrcoef(sample)
-    print(f"Mean inter-channel correlation: {np.mean(corr):.4f}")
 
-check_channel_similarity(all_stats_arr)
 # 保存
-
 np.save(os.path.join(SAVE_DIR, "final_psds.npy"), all_psds_arr)
 np.save(os.path.join(SAVE_DIR, "final_stats.npy"), all_stats_arr)
 np.save(os.path.join(SAVE_DIR, "final_peris.npy"), all_peris_arr)
