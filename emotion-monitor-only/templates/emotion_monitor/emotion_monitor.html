@@ -1,0 +1,412 @@
+{% load static %}<!DOCTYPE html>
+<html lang="zh-CN" class="light-style">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0" />
+  <title>多模态情绪识别分析平台</title>
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/apexcharts@3.45.0/dist/apexcharts.css" />
+  <link rel="stylesheet" href="{% static 'css/emotion-monitor.css' %}" />
+
+  <style>
+    .emotion-dashboard .card {
+      border-radius: 0.875rem;
+    }
+    .emotion-dashboard .card-header {
+      padding-top: 0.85rem;
+      padding-bottom: 0.65rem;
+    }
+    .emotion-dashboard .card-body {
+      padding-top: 0.85rem;
+    }
+    .compact-card {
+      min-height: auto !important;
+    }
+    .compact-card .card-header {
+      min-height: 44px;
+    }
+    .current-emotion-card .card-body {
+      padding-top: 1rem !important;
+      padding-bottom: 1.15rem !important;
+    }
+    .current-emotion-label {
+      font-size: 2.15rem;
+      font-weight: 700;
+      line-height: 1.15;
+      text-align: center;
+      color: #7367f0;
+    }
+    .current-emotion-subtitle {
+      text-align: center;
+      color: #6c757d;
+      font-size: 0.9rem;
+      margin-top: 0.25rem;
+    }
+    .emotion-metrics {
+      max-width: 94%;
+      margin: 0 auto;
+    }
+    .emotion-metrics .progress {
+      height: 8px;
+      border-radius: 999px;
+    }
+    .emotion-metrics .progress-bar {
+      border-radius: 999px;
+    }
+    .va-card .card-body {
+      padding-top: 0.25rem !important;
+      padding-bottom: 0.35rem !important;
+    }
+    #vaChart {
+      min-height: 240px !important;
+    }
+    #vaChart .apexcharts-canvas {
+      margin: 0 auto;
+    }
+    .trial-video-wrapper {
+      width: 100%;
+      background: #000;
+      border-radius: 0.75rem;
+      overflow: hidden;
+    }
+    .trial-video-wrapper video {
+      width: 100%;
+      height: 300px;
+      object-fit: contain;
+      background: #000;
+      display: block;
+    }
+    .upload-helper-text {
+      font-size: 0.78rem;
+      color: #6c757d;
+      margin-top: 0.25rem;
+    }
+    .required-mark {
+      color: #ea5455;
+      font-weight: 600;
+    }
+    #eegChart {
+      min-height: 310px;
+    }
+    #peripheralChart,
+    #emotionTrendChart {
+      min-height: 280px;
+    }
+    .raw-topomap-wrapper {
+      width: 100%;
+      min-height: 280px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 0.75rem;
+      background: rgba(115, 103, 240, 0.04);
+      overflow: hidden;
+      position: relative;
+    }
+    #rawTopomapImage {
+      max-width: 100%;
+      height: 260px;
+      object-fit: contain;
+      display: none;
+    }
+    .raw-topomap-placeholder {
+      color: #6c757d;
+      font-size: 0.9rem;
+      text-align: center;
+      padding: 1rem;
+    }
+    @media (max-width: 768px) {
+      .current-emotion-label {
+        font-size: 1.8rem;
+      }
+      .trial-video-wrapper video {
+        height: 220px;
+      }
+      #rawTopomapImage {
+        height: 220px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<div class="emotion-dashboard">
+  {% csrf_token %}
+
+  <div class="row mb-4">
+    <div class="col-12">
+      <div class="card monitor-header-card">
+        <div class="card-body d-flex justify-content-between align-items-center flex-wrap">
+          <div>
+            <h4 class="mb-1">多模态情绪识别分析平台</h4>
+            <div class="text-muted">实验：EXP-2025-001 ｜ 被试：SUB-023 ｜ 阶段：视频刺激任务</div>
+          </div>
+          <div class="d-flex align-items-center gap-3 mt-2 mt-md-0 flex-wrap">
+            <span class="badge bg-success monitor-status-dot">● Recording</span>
+            <span class="text-muted" id="currentTime">--:--:--</span>
+            <span class="badge bg-label-primary" id="modelVersion">Model Loading</span>
+            <button class="btn btn-primary btn-sm">导出报告</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row mb-4">
+    <div class="col-xl-3 col-lg-4 col-md-12 mb-4 mb-xl-0">
+      <div class="card emotion-card current-emotion-card compact-card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <div>
+            <h5 class="mb-0">当前情绪状态</h5>
+            <small class="text-muted">Current Emotion</small>
+          </div>
+          <span class="badge bg-label-primary">MH-DGFNet</span>
+        </div>
+        <div class="card-body">
+          <div class="current-emotion-label" id="emotionLabel">Waiting</div>
+          <div class="current-emotion-subtitle" id="emotionType">等待识别</div>
+          <div class="emotion-metrics mt-4">
+            <div class="d-flex justify-content-between mb-1">
+              <span class="text-muted">Valence</span>
+              <span id="valenceText" class="fw-semibold">0.00</span>
+            </div>
+            <div class="progress mb-3">
+              <div id="valenceBar" class="progress-bar" style="width: 50%; background-color: #7367f0"></div>
+            </div>
+            <div class="d-flex justify-content-between mb-1">
+              <span class="text-muted">Arousal</span>
+              <span id="arousalText" class="fw-semibold">0.00</span>
+            </div>
+            <div class="progress mb-3">
+              <div id="arousalBar" class="progress-bar" style="width: 50%; background-color: #7367f0"></div>
+            </div>
+            <div class="d-flex justify-content-between mb-1">
+              <span class="text-muted">Confidence</span>
+              <span id="confidenceText" class="fw-semibold">0%</span>
+            </div>
+            <div class="progress">
+              <div id="confidenceBar" class="progress-bar" style="width: 0%; background-color: #7367f0"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-xl-6 col-lg-8 col-md-12 mb-4 mb-xl-0">
+      <div class="card emotion-card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <div>
+            <h5 class="mb-0">原始脑电动态预览</h5>
+            <small class="text-muted">Raw EEG Preview / Separated Channels</small>
+          </div>
+          <div>
+            <span class="badge bg-label-success me-1">Raw EEG</span>
+            <span class="badge bg-label-info">4 Channels</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="eeg-separated-wrapper">
+            <div class="eeg-channel-row">
+              <div class="eeg-channel-label">Fp1</div>
+              <div class="eeg-mini-chart" id="eegChartFp1"></div>
+            </div>
+            <div class="eeg-channel-row">
+              <div class="eeg-channel-label">F3</div>
+              <div class="eeg-mini-chart" id="eegChartF3"></div>
+            </div>
+            <div class="eeg-channel-row">
+              <div class="eeg-channel-label">F4</div>
+              <div class="eeg-mini-chart" id="eegChartF4"></div>
+            </div>
+            <div class="eeg-channel-row">
+              <div class="eeg-channel-label">Cz</div>
+              <div class="eeg-mini-chart" id="eegChartCz"></div>
+            </div>
+          </div>
+          <div class="small text-muted mt-2">
+            四个 EEG 通道分行显示，避免曲线重叠造成信息遮挡。当前展示为标准化后的原始波形预览。
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-xl-3 col-lg-12 col-md-12">
+      <div class="card emotion-card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <div>
+            <h5 class="mb-0">原始 EEG 脑地形图</h5>
+            <small class="text-muted">Raw EEG Topomap</small>
+          </div>
+          <select id="rawTopomapBandSelect" class="form-select form-select-sm" style="width: 105px">
+            <option value="0">Delta</option>
+            <option value="1">Theta</option>
+            <option value="2">Alpha</option>
+            <option value="3">Beta</option>
+            <option value="4">Gamma</option>
+          </select>
+        </div>
+        <div class="card-body">
+          <div class="raw-topomap-wrapper">
+            <img id="rawTopomapImage" src="" alt="Raw EEG Topomap" />
+            <div id="rawTopomapPlaceholder" class="raw-topomap-placeholder">
+              上传原始 EEG 数据并完成识别后显示脑地形图
+            </div>
+          </div>
+          <div class="small text-muted mt-2">
+            基于原始 EEG 频段功率计算，使用标准 10-20 电极位置绘制。
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row mb-4">
+    <div class="col-xl-3 col-lg-4 col-md-12 mb-4 mb-xl-0">
+      <div class="card emotion-card va-card compact-card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <div>
+            <h5 class="mb-0">效价 - 唤醒空间</h5>
+            <small class="text-muted">Valence-Arousal</small>
+          </div>
+          <span class="badge bg-label-info">-1 ~ 1</span>
+        </div>
+        <div class="card-body">
+          <div id="vaChart"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-xl-5 col-lg-8 col-md-12 mb-4 mb-xl-0">
+      <div class="card emotion-card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <div>
+            <h5 class="mb-0">人脸视频流</h5>
+            <small class="text-muted">Facial Stream / Trial Video</small>
+          </div>
+          <span class="badge bg-success">Face Detected</span>
+        </div>
+        <div class="card-body">
+          <div class="trial-video-wrapper" id="faceVideoBox">
+            <video id="trialVideoPlayer" controls muted loop playsinline preload="metadata">
+              当前浏览器不支持视频播放
+            </video>
+          </div>
+          <div class="row mt-3">
+            <div class="col-6">
+              <small class="text-muted">Expression</small>
+              <div class="fw-semibold" id="faceExpression">Visual Feature</div>
+            </div>
+            <div class="col-6">
+              <small class="text-muted">Face Quality</small>
+              <div class="fw-semibold text-success" id="faceQuality">--</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-xl-4 col-lg-12 col-md-12">
+      <div class="card emotion-card h-100">
+        <div class="card-header">
+          <h5 class="mb-0">原始外周生理动态预览</h5>
+          <small class="text-muted">Raw Peripheral Preview</small>
+        </div>
+        <div class="card-body">
+          <div class="row mb-3">
+            <div class="col-3">
+              <small class="text-muted">HR</small>
+              <div class="fw-semibold" id="hrValue">--</div>
+            </div>
+            <div class="col-3">
+              <small class="text-muted">HRV</small>
+              <div class="fw-semibold" id="hrvValue">--</div>
+            </div>
+            <div class="col-3">
+              <small class="text-muted">GSR</small>
+              <div class="fw-semibold" id="gsrValue">--</div>
+            </div>
+            <div class="col-3">
+              <small class="text-muted">Resp</small>
+              <div class="fw-semibold" id="respValue">--</div>
+            </div>
+          </div>
+          <div id="peripheralChart"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-12">
+      <div class="card emotion-card">
+        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <div>
+            <h5 class="mb-0">情绪变化趋势</h5>
+            <small class="text-muted">Emotion Trend</small>
+          </div>
+          <div class="d-flex align-items-center gap-2 flex-wrap">
+            <span class="small text-muted" id="predictStatusText">等待上传特征文件与原始数据文件</span>
+            <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#trialUploadModal">
+              上传并识别
+            </button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div id="emotionTrendChart"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal fade" id="trialUploadModal" tabindex="-1" aria-labelledby="trialUploadModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <div>
+            <h5 class="modal-title" id="trialUploadModalLabel">三模态数据上传与识别</h5>
+            <small class="text-muted">Feature files for inference / Raw data for visualization</small>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div>
+            <label class="form-label">上传当前 Trial 对应视频文件，可选</label>
+            <input type="file" id="trialVideoInput" accept="video/mp4,video/webm,video/ogg" class="form-control form-control-sm" />
+            <div class="upload-helper-text">视频仅用于前端播放展示，不参与模型推理。</div>
+          </div>
+          <div class="mt-3">
+            <label class="form-label">上传被试完整 EEG/外周特征 NPZ 文件<span class="required-mark">*</span></label>
+            <input type="file" id="featureNpzInput" accept=".npz" class="form-control form-control-sm" />
+            <div class="upload-helper-text">例如 s03.npz。用于 MH-DGFNet 推理，通常包含处理后的 EEG/外周特征。</div>
+          </div>
+          <div class="mt-3">
+            <label class="form-label">上传当前 Trial 的视觉特征 NPY 文件<span class="required-mark">*</span></label>
+            <input type="file" id="visualNpyInput" accept=".npy" class="form-control form-control-sm" />
+            <div class="upload-helper-text">例如 s03_trial01_features.npy。用于 MH-DGFNet 视觉模态推理。</div>
+          </div>
+          <div class="mt-3">
+            <label class="form-label">上传原始 EEG/外周数据文件<span class="required-mark">*</span></label>
+            <input type="file" id="rawDataInput" accept=".dat" class="form-control form-control-sm" />
+            <div class="upload-helper-text">用于原始脑电波形、原始外周生理波形和原始 EEG 脑地形图展示。当前后端推荐上传 DEAP 原始 s03.dat。</div>
+          </div>
+          <div class="mt-3">
+            <label class="form-label">Trial 编号，1~40<span class="required-mark">*</span></label>
+            <input type="number" id="trialIndexInput" min="1" max="40" value="1" class="form-control form-control-sm" />
+            <div class="upload-helper-text">后端会从特征 NPZ 和原始数据文件中读取对应 trial。</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-label-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+          <button type="button" class="btn btn-primary btn-sm" id="predictTrialBtn">开始识别</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/apexcharts@3.45.0/dist/apexcharts.min.js"></script>
+<script src="{% static 'js/emotion-monitor.js' %}?v=20250601_4"></script>
+</body>
+</html>

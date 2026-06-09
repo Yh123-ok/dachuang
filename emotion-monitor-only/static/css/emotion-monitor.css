@@ -1,0 +1,381 @@
+/* ======================================================
+   公共样式
+   ====================================================== */
+.emotion-dashboard {
+  padding: 1rem;
+}
+
+.monitor-status-dot {
+  letter-spacing: 0.4px;
+}
+
+.current-emotion-label {
+  font-size: 36px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.current-emotion-subtitle {
+  margin-top: 8px;
+  font-size: 15px;
+}
+
+.emotion-dashboard .progress {
+  height: 8px;
+  border-radius: 999px;
+}
+
+.emotion-dashboard .progress-bar {
+  border-radius: 999px;
+  transition: width 0.5s ease;
+}
+
+.face-video-box {
+  width: 100%;
+  height: 260px;
+  border-radius: 14px;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  user-select: none;
+}
+
+.quality-item {
+  margin-bottom: 18px;
+}
+
+#vaChart,
+#eegChart,
+#peripheralChart,
+#emotionTrendChart {
+  min-height: 260px;
+  background: transparent;
+}
+
+.btn-primary.btn-sm {
+  padding: 5px 12px;
+  font-size: 13px;
+}
+
+/* ======================================================
+   暗色模式  html.dark-style
+   ====================================================== */
+html.dark-style .emotion-dashboard {
+  color: #f8fafc;
+  background-color: #0f172a;
+}
+
+html.dark-style .emotion-dashboard .card {
+  background: #171e2e;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.22);
+  border-radius: 16px;
+}
+
+html.dark-style .emotion-dashboard .card-header {
+  background: transparent;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  color: #cbd5e1;
+}
+
+html.dark-style .emotion-dashboard .card-header h5 {
+  color: #e2e8f0;
+}
+
+html.dark-style .emotion-dashboard .text-muted {
+  color: #94a3b8 !important;
+}
+
+html.dark-style .emotion-dashboard .fw-semibold {
+  color: #e2e8f0;
+}
+
+html.dark-style .emotion-dashboard .monitor-header-card {
+  background: linear-gradient(135deg, #171e2e 0%, #1e293b 100%) !important;
+}
+
+html.dark-style .emotion-dashboard .monitor-header-card h4 {
+  color: #f1f5f9;
+}
+
+html.dark-style .emotion-dashboard .current-emotion-card {
+  background: radial-gradient(circle at top right, rgba(255, 176, 32, 0.18), transparent 40%), #171e2e !important;
+}
+
+html.dark-style .emotion-dashboard .current-emotion-label {
+  color: #ffb020;
+}
+
+html.dark-style .emotion-dashboard .current-emotion-subtitle {
+  color: #cbd5e1;
+}
+
+html.dark-style .emotion-dashboard .progress {
+  background-color: rgba(148, 163, 184, 0.18);
+}
+
+html.dark-style .emotion-dashboard .face-video-box {
+  background: #0f172a;
+  border: 1px solid rgba(0, 207, 232, 0.25);
+  color: #64748b;
+}
+
+html.dark-style .emotion-dashboard .signal-summary {
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+  padding-top: 16px;
+}
+
+html.dark-style .emotion-dashboard hr {
+  border-color: rgba(148, 163, 184, 0.15);
+}
+
+html.dark-style .emotion-dashboard .d-flex span {
+  color: #cbd5e1;
+}
+
+/* scrollbar 暗色 */
+html.dark-style .emotion-dashboard ::-webkit-scrollbar {
+  height: 6px;
+  background: transparent;
+}
+html.dark-style .emotion-dashboard ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+/* ======================================================
+   亮色模式  html.light-style
+   ====================================================== */
+html.light-style .emotion-dashboard {
+  color: #1e293b;
+  background-color: #f1f5f9;
+}
+
+html.light-style .emotion-dashboard .card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  border-radius: 16px;
+}
+
+html.light-style .emotion-dashboard .card-header {
+  background: transparent;
+  border-bottom: 1px solid #e2e8f0;
+  color: #475569;
+}
+
+html.light-style .emotion-dashboard .card-header h5 {
+  color: #1e293b;
+}
+
+html.light-style .emotion-dashboard .text-muted {
+  color: #64748b !important;
+}
+
+html.light-style .emotion-dashboard .fw-semibold {
+  color: #334155;
+}
+
+html.light-style .emotion-dashboard .monitor-header-card {
+  background: linear-gradient(135deg, #ffffff 0%, #f1f5f9 100%) !important;
+}
+
+html.light-style .emotion-dashboard .monitor-header-card h4 {
+  color: #0f172a;
+}
+
+html.light-style .emotion-dashboard .current-emotion-card {
+  background: radial-gradient(circle at top right, rgba(251, 191, 36, 0.12), transparent 40%), #ffffff !important;
+}
+
+html.light-style .emotion-dashboard .current-emotion-label {
+  color: #d97706;
+}
+
+html.light-style .emotion-dashboard .current-emotion-subtitle {
+  color: #64748b;
+}
+
+html.light-style .emotion-dashboard .progress {
+  background-color: #e2e8f0;
+}
+
+html.light-style .emotion-dashboard .face-video-box {
+  background: #f8fafc;
+  border: 1px solid rgba(14, 165, 233, 0.3);
+  color: #64748b;
+}
+
+html.light-style .emotion-dashboard .signal-summary {
+  border-top: 1px solid #e2e8f0;
+  padding-top: 16px;
+}
+
+html.light-style .emotion-dashboard hr {
+  border-color: #e2e8f0;
+}
+
+html.light-style .emotion-dashboard .d-flex span {
+  color: #334155;
+}
+
+/* scrollbar 亮色 */
+html.light-style .emotion-dashboard ::-webkit-scrollbar {
+  height: 6px;
+  background: transparent;
+}
+html.light-style .emotion-dashboard ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 3px;
+}
+.compact-card {
+  min-height: auto !important;
+}
+
+.compact-card .card-header {
+  min-height: 44px;
+}
+
+.emotion-main-label {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.emotion-metrics {
+  max-width: 92%;
+  margin: 0 auto;
+}
+
+.compact-progress {
+  height: 8px;
+  border-radius: 999px;
+}
+
+.compact-progress .progress-bar {
+  border-radius: 999px;
+}
+
+.va-card .card-body {
+  padding-top: 0.25rem !important;
+  padding-bottom: 0.5rem !important;
+}
+
+.compact-va-chart {
+  min-height: 240px;
+}
+
+#vaChart {
+  min-height: 240px !important;
+}
+/* ====== EEG 四行独立显示 ====== */
+.eeg-separated-wrapper {
+  width: 100%;
+}
+
+.eeg-channel-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 82px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.eeg-channel-row:last-child {
+  border-bottom: none;
+}
+
+.eeg-channel-label {
+  width: 48px;
+  min-width: 48px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #7367f0;
+  text-align: center;
+}
+
+.eeg-mini-chart {
+  flex: 1;
+  min-height: 78px;
+}
+
+/* 缩小 VA 图 */
+.va-card .card-body {
+  padding-top: 0.25rem !important;
+  padding-bottom: 0.35rem !important;
+}
+
+#vaChart {
+  min-height: 220px !important;
+}
+
+/* 视频区域稍微压缩 */
+.trial-video-wrapper video {
+  width: 100%;
+  height: 260px;
+  object-fit: contain;
+  background: #000;
+  display: block;
+}
+
+/* 脑地形图 */
+.raw-topomap-wrapper {
+  width: 100%;
+  min-height: 280px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.75rem;
+  background: rgba(115, 103, 240, 0.04);
+  overflow: hidden;
+  position: relative;
+}
+
+#rawTopomapImage {
+  max-width: 100%;
+  height: 250px;
+  object-fit: contain;
+  display: none;
+}
+
+.raw-topomap-placeholder {
+  color: #6c757d;
+  font-size: 0.9rem;
+  text-align: center;
+  padding: 1rem;
+}
+
+/* 弹窗上传说明 */
+.upload-helper-text {
+  font-size: 0.78rem;
+  color: #6c757d;
+  margin-top: 0.25rem;
+}
+
+.required-mark {
+  color: #ea5455;
+  font-weight: 600;
+}
+
+/* 小屏适配 */
+@media (max-width: 768px) {
+  .eeg-channel-row {
+    min-height: 76px;
+  }
+
+  .eeg-channel-label {
+    width: 42px;
+    min-width: 42px;
+  }
+
+  .trial-video-wrapper video {
+    height: 220px;
+  }
+
+  #rawTopomapImage {
+    height: 220px;
+  }
+}
